@@ -91,6 +91,22 @@ app.use('*', async (c, next) => {
   return next();
 });
 
+// ─── Auth Middleware ────────────────────────────────────────────────
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  const method = c.req.method;
+  // Public: GET, OPTIONS, health
+  if (method === 'GET' || method === 'OPTIONS' || method === 'HEAD' || path === '/health') return next();
+  // Writes require API key
+  const apiKey = c.req.header('X-Echo-API-Key') || '';
+  const bearer = (c.req.header('Authorization') || '').replace('Bearer ', '');
+  const expected = c.env.ECHO_API_KEY;
+  if (!expected || (apiKey !== expected && bearer !== expected)) {
+    return c.json({ error: 'Unauthorized', message: 'Valid X-Echo-API-Key or Bearer token required for write operations' }, 401);
+  }
+  return next();
+});
+
 // ─── Tenant extraction ──────────────────────────────────────────────
 function getTenantId(c: { req: { header: (n: string) => string | undefined; query: (n: string) => string | undefined } }): string {
   return c.req.header('X-Tenant-ID') || c.req.query('tenant_id') || 'default';
