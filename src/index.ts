@@ -964,6 +964,19 @@ async function cronHandler(env: Env) {
   log('info', 'Cron complete', { response_breaches: responseBreaches.results?.length || 0, resolution_breaches: resolutionBreaches.results?.length || 0 });
 }
 
+// ─── Global Error Handlers ──────────────────────────────────────────
+app.onError((err, c) => {
+  if (err.message?.includes('JSON')) {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  console.error(`[echo-helpdesk] ${err.message}`);
+  return c.json({ error: 'Internal server error' }, 500);
+});
+
+app.notFound((c) => {
+  return c.json({ error: 'Not found' }, 404);
+});
+
 // ─── Export ─────────────────────────────────────────────────────────
 export default {
   fetch: app.fetch,
