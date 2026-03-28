@@ -124,7 +124,7 @@ function getTenantId(c: { req: { header: (n: string) => string | undefined; quer
 }
 
 // ─── Health ─────────────────────────────────────────────────────────
-app.get('/', (c) => c.redirect('/health'));
+app.get('/', (c) => c.json({ service: 'echo-helpdesk', version: '1.0.0', status: 'operational' }));
 app.get('/health', async (c) => {
   try {
     await c.env.DB.prepare('SELECT 1').first();
