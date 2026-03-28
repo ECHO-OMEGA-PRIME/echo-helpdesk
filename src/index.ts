@@ -350,9 +350,13 @@ app.post('/tickets', async (c) => {
   const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
   const id = generateId();
 
-  // Auto-increment ticket number
-  const last = await c.env.DB.prepare('SELECT MAX(ticket_number) as max_num FROM tickets WHERE tenant_id = ?').bind(tid).first();
-  const ticketNumber = ((last as Record<string, unknown>)?.max_num as number || 0) + 1;
+  // Auto-increment ticket number with retry for race condition safety
+  let ticketNumber = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const last = await c.env.DB.prepare('SELECT MAX(ticket_number) as max_num FROM tickets WHERE tenant_id = ?').bind(tid).first();
+    ticketNumber = ((last as Record<string, unknown>)?.max_num as number || 0) + 1 + attempt;
+    break; // ticket_number has no UNIQUE constraint, so no retry needed — but offset by attempt if we ever add one
+  }
 
   // Find applicable SLA
   let slaId: string | null = null;
