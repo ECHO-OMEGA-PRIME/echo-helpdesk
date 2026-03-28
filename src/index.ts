@@ -1,5 +1,5 @@
 /**
- * Echo Helpdesk v1.0.0 — AI-Powered Customer Support Platform
+ * Echo Helpdesk v1.1.0 — AI-Powered Customer Support Platform
  * =============================================================
  * Ticket management, SLA tracking, AI auto-responses, knowledge base,
  * multi-channel support, agent assignment, automations, CSAT surveys.
@@ -128,7 +128,7 @@ app.get('/', (c) => c.redirect('/health'));
 app.get('/health', async (c) => {
   try {
     await c.env.DB.prepare('SELECT 1').first();
-    return c.json({ ok: true, service: 'echo-helpdesk', version: '1.0.0', d1: 'connected', ts: new Date().toISOString() });
+    return c.json({ ok: true, service: 'echo-helpdesk', version: '1.1.0', d1: 'connected', ts: new Date().toISOString() });
   } catch {
     return c.json({ ok: false, service: 'echo-helpdesk', d1: 'error' }, 500);
   }
@@ -155,12 +155,15 @@ app.post('/tenants', async (c) => {
 app.get('/agents', async (c) => {
   const tid = getTenantId(c);
   const status = c.req.query('status');
+  const { limit, offset } = parsePagination(c);
   let sql = 'SELECT * FROM agents WHERE tenant_id = ?';
   const params: unknown[] = [tid];
   if (status) { sql += ' AND status = ?'; params.push(status); }
-  sql += ' ORDER BY name ASC';
+  sql += ' ORDER BY name ASC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
   const rows = await c.env.DB.prepare(sql).bind(...params).all();
-  return c.json({ agents: rows.results });
+  const total = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM agents WHERE tenant_id = ?').bind(tid).first();
+  return c.json({ agents: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
 });
 
 app.post('/agents', async (c) => {
@@ -766,9 +769,10 @@ app.put('/kb/:id', async (c) => {
 });
 
 app.post('/kb/:id/feedback', async (c) => {
+  const tid = getTenantId(c);
   const body = await c.req.json() as { helpful: boolean };
   const col = body.helpful ? 'helpful_count' : 'not_helpful_count';
-  await c.env.DB.prepare(`UPDATE kb_articles SET ${col} = ${col} + 1 WHERE id = ?`).bind(c.req.param('id')).run();
+  await c.env.DB.prepare(`UPDATE kb_articles SET ${col} = ${col} + 1 WHERE id = ? AND tenant_id = ?`).bind(c.req.param('id'), tid).run();
   return c.json({ recorded: true });
 });
 
