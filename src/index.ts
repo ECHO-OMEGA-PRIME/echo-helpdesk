@@ -980,7 +980,7 @@ app.onError((err, c) => {
   if (err.message?.includes('JSON')) {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
-  console.error(`[echo-helpdesk] ${err.message}`);
+  log('error', 'Unhandled request error', { error: err.message, stack: err.stack });
   return c.json({ error: 'Internal server error' }, 500);
 });
 
