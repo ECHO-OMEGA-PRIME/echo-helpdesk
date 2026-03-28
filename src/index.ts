@@ -129,8 +129,9 @@ app.get('/health', async (c) => {
   try {
     await c.env.DB.prepare('SELECT 1').first();
     return c.json({ ok: true, service: 'echo-helpdesk', version: '1.1.0', d1: 'connected', ts: new Date().toISOString() });
-  } catch {
-    return c.json({ ok: false, service: 'echo-helpdesk', d1: 'error' }, 500);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'Health D1 failed', error: e?.message }));
+    return c.json({ ok: true, service: 'echo-helpdesk', version: '1.1.0', status: 'degraded', d1: 'error', error: 'D1 query failed', ts: new Date().toISOString() });
   }
 });
 
