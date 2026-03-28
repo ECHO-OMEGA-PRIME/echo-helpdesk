@@ -138,395 +138,535 @@ app.get('/health', async (c) => {
 // TENANTS
 // ═══════════════════════════════════════════════════════════════════
 app.get('/tenants', async (c) => {
-  const rows = await c.env.DB.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all();
-  return c.json({ tenants: rows.results });
+  try {
+    const rows = await c.env.DB.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all();
+    return c.json({ tenants: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/tenants', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/tenants', async (c) => {
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
-  await c.env.DB.prepare('INSERT INTO tenants (id, name, domain, plan) VALUES (?, ?, ?, ?)').bind(id, body.name, body.domain || null, body.plan || 'starter').run();
-  return c.json({ id, created: true }, 201);
+  try {
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
+    await c.env.DB.prepare('INSERT INTO tenants (id, name, domain, plan) VALUES (?, ?, ?, ?)').bind(id, body.name, body.domain || null, body.plan || 'starter').run();
+    return c.json({ id, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tenants', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
 // AGENTS
 // ═══════════════════════════════════════════════════════════════════
 app.get('/agents', async (c) => {
-  const tid = getTenantId(c);
-  const status = c.req.query('status');
-  const { limit, offset } = parsePagination(c);
-  let sql = 'SELECT * FROM agents WHERE tenant_id = ?';
-  const params: unknown[] = [tid];
-  if (status) { sql += ' AND status = ?'; params.push(status); }
-  sql += ' ORDER BY name ASC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-  const rows = await c.env.DB.prepare(sql).bind(...params).all();
-  const total = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM agents WHERE tenant_id = ?').bind(tid).first();
-  return c.json({ agents: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
+  try {
+    const tid = getTenantId(c);
+    const status = c.req.query('status');
+    const { limit, offset } = parsePagination(c);
+    let sql = 'SELECT * FROM agents WHERE tenant_id = ?';
+    const params: unknown[] = [tid];
+    if (status) { sql += ' AND status = ?'; params.push(status); }
+    sql += ' ORDER BY name ASC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    const rows = await c.env.DB.prepare(sql).bind(...params).all();
+    const total = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM agents WHERE tenant_id = ?').bind(tid).first();
+    return c.json({ agents: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/agents', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/agents', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
-  await c.env.DB.prepare('INSERT INTO agents (id, tenant_id, name, email, role, specialties, max_tickets) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, tid, body.name, body.email, body.role || 'agent', JSON.stringify(body.specialties || []), body.max_tickets || 20).run();
-  return c.json({ id, created: true }, 201);
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
+    await c.env.DB.prepare('INSERT INTO agents (id, tenant_id, name, email, role, specialties, max_tickets) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(id, tid, body.name, body.email, body.role || 'agent', JSON.stringify(body.specialties || []), body.max_tickets || 20).run();
+    return c.json({ id, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /agents', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/agents/:id', async (c) => {
-  const tid = getTenantId(c);
-  const agent = await c.env.DB.prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
-  if (!agent) return c.json({ error: 'Agent not found' }, 404);
-  const open = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM tickets WHERE assigned_agent_id = ? AND status IN ('open','pending')").bind(agent.id).first();
-  const resolved = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM tickets WHERE assigned_agent_id = ? AND status = 'resolved'").bind(agent.id).first();
-  const avgSat = await c.env.DB.prepare('SELECT AVG(rating) as avg_rating FROM satisfaction_surveys WHERE agent_id = ?').bind(agent.id).first();
-  return c.json({ ...agent, open_tickets: (open as Record<string, unknown>)?.cnt || 0, resolved_tickets: (resolved as Record<string, unknown>)?.cnt || 0, avg_satisfaction: (avgSat as Record<string, unknown>)?.avg_rating || null });
+  try {
+    const tid = getTenantId(c);
+    const agent = await c.env.DB.prepare('SELECT * FROM agents WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
+    if (!agent) return c.json({ error: 'Agent not found' }, 404);
+    const open = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM tickets WHERE assigned_agent_id = ? AND status IN ('open','pending')").bind(agent.id).first();
+    const resolved = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM tickets WHERE assigned_agent_id = ? AND status = 'resolved'").bind(agent.id).first();
+    const avgSat = await c.env.DB.prepare('SELECT AVG(rating) as avg_rating FROM satisfaction_surveys WHERE agent_id = ?').bind(agent.id).first();
+    return c.json({ ...agent, open_tickets: (open as Record<string, unknown>)?.cnt || 0, resolved_tickets: (resolved as Record<string, unknown>)?.cnt || 0, avg_satisfaction: (avgSat as Record<string, unknown>)?.avg_rating || null });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/agents/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/agents/:id', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const fields: string[] = [];
-  const vals: unknown[] = [];
-  for (const [k, v] of Object.entries(body)) {
-    if (['name', 'email', 'role', 'status', 'avatar_url', 'signature', 'is_active', 'max_tickets'].includes(k)) {
-      fields.push(`${k} = ?`);
-      vals.push(v);
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const fields: string[] = [];
+    const vals: unknown[] = [];
+    for (const [k, v] of Object.entries(body)) {
+      if (['name', 'email', 'role', 'status', 'avatar_url', 'signature', 'is_active', 'max_tickets'].includes(k)) {
+        fields.push(`${k} = ?`);
+        vals.push(v);
+      }
+      if (k === 'specialties') { fields.push('specialties = ?'); vals.push(JSON.stringify(v)); }
     }
-    if (k === 'specialties') { fields.push('specialties = ?'); vals.push(JSON.stringify(v)); }
+    if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400);
+    vals.push(c.req.param('id'), tid);
+    await c.env.DB.prepare(`UPDATE agents SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
+    return c.json({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'PUT /agents/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  if (fields.length === 0) return c.json({ error: 'No fields to update' }, 400);
-  vals.push(c.req.param('id'), tid);
-  await c.env.DB.prepare(`UPDATE agents SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
-  return c.json({ updated: true });
 });
 
 app.delete('/agents/:id', async (c) => {
-  const tid = getTenantId(c);
-  await c.env.DB.prepare('UPDATE tickets SET assigned_agent_id = NULL WHERE assigned_agent_id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  await c.env.DB.prepare('DELETE FROM team_members WHERE agent_id = ?').bind(c.req.param('id')).run();
-  await c.env.DB.prepare('DELETE FROM agents WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  return c.json({ deleted: true });
+  try {
+    const tid = getTenantId(c);
+    await c.env.DB.prepare('UPDATE tickets SET assigned_agent_id = NULL WHERE assigned_agent_id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    await c.env.DB.prepare('DELETE FROM team_members WHERE agent_id = ?').bind(c.req.param('id')).run();
+    await c.env.DB.prepare('DELETE FROM agents WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    return c.json({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'DELETE /agents/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
 // TEAMS
 // ═══════════════════════════════════════════════════════════════════
 app.get('/teams', async (c) => {
-  const tid = getTenantId(c);
-  const rows = await c.env.DB.prepare('SELECT * FROM teams WHERE tenant_id = ? ORDER BY name').bind(tid).all();
-  return c.json({ teams: rows.results });
+  try {
+    const tid = getTenantId(c);
+    const rows = await c.env.DB.prepare('SELECT * FROM teams WHERE tenant_id = ? ORDER BY name').bind(tid).all();
+    return c.json({ teams: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/teams', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/teams', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
-  await c.env.DB.prepare('INSERT INTO teams (id, tenant_id, name, description, lead_agent_id) VALUES (?, ?, ?, ?, ?)').bind(id, tid, body.name, body.description || null, body.lead_agent_id || null).run();
-  return c.json({ id, created: true }, 201);
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
+    await c.env.DB.prepare('INSERT INTO teams (id, tenant_id, name, description, lead_agent_id) VALUES (?, ?, ?, ?, ?)').bind(id, tid, body.name, body.description || null, body.lead_agent_id || null).run();
+    return c.json({ id, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /teams', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/teams/:id/members', async (c) => {
-  const body = await c.req.json() as Record<string, unknown>;
-  await c.env.DB.prepare('INSERT OR IGNORE INTO team_members (team_id, agent_id) VALUES (?, ?)').bind(c.req.param('id'), body.agent_id).run();
-  return c.json({ added: true }, 201);
+  try {
+    const body = await c.req.json() as Record<string, unknown>;
+    await c.env.DB.prepare('INSERT OR IGNORE INTO team_members (team_id, agent_id) VALUES (?, ?)').bind(c.req.param('id'), body.agent_id).run();
+    return c.json({ added: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /teams/:id/members', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/teams/:id/members/:agentId', async (c) => {
-  await c.env.DB.prepare('DELETE FROM team_members WHERE team_id = ? AND agent_id = ?').bind(c.req.param('id'), c.req.param('agentId')).run();
-  return c.json({ removed: true });
+  try {
+    await c.env.DB.prepare('DELETE FROM team_members WHERE team_id = ? AND agent_id = ?').bind(c.req.param('id'), c.req.param('agentId')).run();
+    return c.json({ removed: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'DELETE /teams/:id/members/:agentId', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/teams/:id/members', async (c) => {
-  const rows = await c.env.DB.prepare('SELECT a.* FROM agents a JOIN team_members tm ON a.id = tm.agent_id WHERE tm.team_id = ?').bind(c.req.param('id')).all();
-  return c.json({ members: rows.results });
+  try {
+    const rows = await c.env.DB.prepare('SELECT a.* FROM agents a JOIN team_members tm ON a.id = tm.agent_id WHERE tm.team_id = ?').bind(c.req.param('id')).all();
+    return c.json({ members: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/teams/:id/members', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/teams/:id', async (c) => {
-  const tid = getTenantId(c);
-  await c.env.DB.prepare('DELETE FROM team_members WHERE team_id = ?').bind(c.req.param('id')).run();
-  await c.env.DB.prepare('DELETE FROM teams WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  return c.json({ deleted: true });
+  try {
+    const tid = getTenantId(c);
+    await c.env.DB.prepare('DELETE FROM team_members WHERE team_id = ?').bind(c.req.param('id')).run();
+    await c.env.DB.prepare('DELETE FROM teams WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    return c.json({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'DELETE /teams/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
 // CUSTOMERS
 // ═══════════════════════════════════════════════════════════════════
 app.get('/customers', async (c) => {
-  const tid = getTenantId(c);
-  const { limit, offset } = parsePagination(c);
-  const search = c.req.query('search');
-  let sql = 'SELECT * FROM customers WHERE tenant_id = ?';
-  const params: unknown[] = [tid];
-  if (search) { sql += " AND (name LIKE ? OR email LIKE ? OR company LIKE ?)"; const s = `%${search}%`; params.push(s, s, s); }
-  sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-  const rows = await c.env.DB.prepare(sql).bind(...params).all();
-  const total = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM customers WHERE tenant_id = ?').bind(tid).first();
-  return c.json({ customers: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
+  try {
+    const tid = getTenantId(c);
+    const { limit, offset } = parsePagination(c);
+    const search = c.req.query('search');
+    let sql = 'SELECT * FROM customers WHERE tenant_id = ?';
+    const params: unknown[] = [tid];
+    if (search) { sql += " AND (name LIKE ? OR email LIKE ? OR company LIKE ?)"; const s = `%${search}%`; params.push(s, s, s); }
+    sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    const rows = await c.env.DB.prepare(sql).bind(...params).all();
+    const total = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM customers WHERE tenant_id = ?').bind(tid).first();
+    return c.json({ customers: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/customers', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/customers', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
-  await c.env.DB.prepare('INSERT INTO customers (id, tenant_id, name, email, phone, company, channel, timezone, language, tags, custom_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, tid, body.name, body.email || null, body.phone || null, body.company || null, body.channel || 'email', body.timezone || null, body.language || 'en', JSON.stringify(body.tags || []), JSON.stringify(body.custom_fields || {})).run();
-  return c.json({ id, created: true }, 201);
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
+    await c.env.DB.prepare('INSERT INTO customers (id, tenant_id, name, email, phone, company, channel, timezone, language, tags, custom_fields) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, tid, body.name, body.email || null, body.phone || null, body.company || null, body.channel || 'email', body.timezone || null, body.language || 'en', JSON.stringify(body.tags || []), JSON.stringify(body.custom_fields || {})).run();
+    return c.json({ id, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /customers', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/customers/:id', async (c) => {
-  const tid = getTenantId(c);
-  const cust = await c.env.DB.prepare('SELECT * FROM customers WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
-  if (!cust) return c.json({ error: 'Customer not found' }, 404);
-  const tickets = await c.env.DB.prepare('SELECT id, ticket_number, subject, status, priority, created_at FROM tickets WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10').bind(cust.id).all();
-  return c.json({ ...cust, recent_tickets: tickets.results });
+  try {
+    const tid = getTenantId(c);
+    const cust = await c.env.DB.prepare('SELECT * FROM customers WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
+    if (!cust) return c.json({ error: 'Customer not found' }, 404);
+    const tickets = await c.env.DB.prepare('SELECT id, ticket_number, subject, status, priority, created_at FROM tickets WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10').bind(cust.id).all();
+    return c.json({ ...cust, recent_tickets: tickets.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/customers/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/customers/:id', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const fields: string[] = [];
-  const vals: unknown[] = [];
-  for (const [k, v] of Object.entries(body)) {
-    if (['name', 'email', 'phone', 'company', 'avatar_url', 'channel', 'timezone', 'language'].includes(k)) {
-      fields.push(`${k} = ?`); vals.push(v);
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const fields: string[] = [];
+    const vals: unknown[] = [];
+    for (const [k, v] of Object.entries(body)) {
+      if (['name', 'email', 'phone', 'company', 'avatar_url', 'channel', 'timezone', 'language'].includes(k)) {
+        fields.push(`${k} = ?`); vals.push(v);
+      }
+      if (k === 'tags' || k === 'custom_fields') { fields.push(`${k} = ?`); vals.push(JSON.stringify(v)); }
     }
-    if (k === 'tags' || k === 'custom_fields') { fields.push(`${k} = ?`); vals.push(JSON.stringify(v)); }
+    if (fields.length === 0) return c.json({ error: 'No fields' }, 400);
+    fields.push("updated_at = datetime('now')");
+    vals.push(c.req.param('id'), tid);
+    await c.env.DB.prepare(`UPDATE customers SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
+    return c.json({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'PUT /customers/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  if (fields.length === 0) return c.json({ error: 'No fields' }, 400);
-  fields.push("updated_at = datetime('now')");
-  vals.push(c.req.param('id'), tid);
-  await c.env.DB.prepare(`UPDATE customers SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
-  return c.json({ updated: true });
 });
 
 app.delete('/customers/:id', async (c) => {
-  const tid = getTenantId(c);
-  await c.env.DB.prepare('UPDATE tickets SET customer_id = NULL WHERE customer_id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  await c.env.DB.prepare('DELETE FROM customers WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  return c.json({ deleted: true });
+  try {
+    const tid = getTenantId(c);
+    await c.env.DB.prepare('UPDATE tickets SET customer_id = NULL WHERE customer_id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    await c.env.DB.prepare('DELETE FROM customers WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    return c.json({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'DELETE /customers/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
 // TICKETS
 // ═══════════════════════════════════════════════════════════════════
 app.get('/tickets', async (c) => {
-  const tid = getTenantId(c);
-  const { limit, offset } = parsePagination(c);
-  const status = c.req.query('status');
-  const priority = c.req.query('priority');
-  const channel = c.req.query('channel');
-  const agent = c.req.query('agent_id');
-  const team = c.req.query('team_id');
-  const customer = c.req.query('customer_id');
-  const search = c.req.query('search');
+  try {
+    const tid = getTenantId(c);
+    const { limit, offset } = parsePagination(c);
+    const status = c.req.query('status');
+    const priority = c.req.query('priority');
+    const channel = c.req.query('channel');
+    const agent = c.req.query('agent_id');
+    const team = c.req.query('team_id');
+    const customer = c.req.query('customer_id');
+    const search = c.req.query('search');
 
-  let sql = `SELECT t.*, c.name as customer_name, c.email as customer_email, a.name as agent_name
-    FROM tickets t LEFT JOIN customers c ON t.customer_id = c.id LEFT JOIN agents a ON t.assigned_agent_id = a.id
-    WHERE t.tenant_id = ?`;
-  const params: unknown[] = [tid];
+    let sql = `SELECT t.*, c.name as customer_name, c.email as customer_email, a.name as agent_name
+      FROM tickets t LEFT JOIN customers c ON t.customer_id = c.id LEFT JOIN agents a ON t.assigned_agent_id = a.id
+      WHERE t.tenant_id = ?`;
+    const params: unknown[] = [tid];
 
-  if (status) { sql += ' AND t.status = ?'; params.push(status); }
-  if (priority) { sql += ' AND t.priority = ?'; params.push(priority); }
-  if (channel) { sql += ' AND t.channel = ?'; params.push(channel); }
-  if (agent) { sql += ' AND t.assigned_agent_id = ?'; params.push(agent); }
-  if (team) { sql += ' AND t.assigned_team_id = ?'; params.push(team); }
-  if (customer) { sql += ' AND t.customer_id = ?'; params.push(customer); }
-  if (search) { sql += ' AND (t.subject LIKE ? OR t.description LIKE ?)'; const s = `%${search}%`; params.push(s, s); }
+    if (status) { sql += ' AND t.status = ?'; params.push(status); }
+    if (priority) { sql += ' AND t.priority = ?'; params.push(priority); }
+    if (channel) { sql += ' AND t.channel = ?'; params.push(channel); }
+    if (agent) { sql += ' AND t.assigned_agent_id = ?'; params.push(agent); }
+    if (team) { sql += ' AND t.assigned_team_id = ?'; params.push(team); }
+    if (customer) { sql += ' AND t.customer_id = ?'; params.push(customer); }
+    if (search) { sql += ' AND (t.subject LIKE ? OR t.description LIKE ?)'; const s = `%${search}%`; params.push(s, s); }
 
-  sql += ' ORDER BY t.created_at DESC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-  const rows = await c.env.DB.prepare(sql).bind(...params).all();
+    sql += ' ORDER BY t.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    const rows = await c.env.DB.prepare(sql).bind(...params).all();
 
-  let countSql = 'SELECT COUNT(*) as cnt FROM tickets WHERE tenant_id = ?';
-  const countParams: unknown[] = [tid];
-  if (status) { countSql += ' AND status = ?'; countParams.push(status); }
-  const total = await c.env.DB.prepare(countSql).bind(...countParams).first();
+    let countSql = 'SELECT COUNT(*) as cnt FROM tickets WHERE tenant_id = ?';
+    const countParams: unknown[] = [tid];
+    if (status) { countSql += ' AND status = ?'; countParams.push(status); }
+    const total = await c.env.DB.prepare(countSql).bind(...countParams).first();
 
-  return c.json({ tickets: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
+    return c.json({ tickets: rows.results, total: (total as Record<string, unknown>)?.cnt || 0, limit, offset });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/tickets', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // Ticket board — grouped by status
 app.get('/tickets/board', async (c) => {
-  const tid = getTenantId(c);
-  const statuses = ['open', 'pending', 'in_progress', 'waiting', 'resolved', 'closed'];
-  const board: Record<string, unknown[]> = {};
-  for (const s of statuses) {
-    const rows = await c.env.DB.prepare(`SELECT t.*, c.name as customer_name, a.name as agent_name FROM tickets t LEFT JOIN customers c ON t.customer_id = c.id LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.tenant_id = ? AND t.status = ? ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.created_at DESC LIMIT 50`).bind(tid, s).all();
-    board[s] = rows.results;
+  try {
+    const tid = getTenantId(c);
+    const statuses = ['open', 'pending', 'in_progress', 'waiting', 'resolved', 'closed'];
+    const board: Record<string, unknown[]> = {};
+    for (const s of statuses) {
+      const rows = await c.env.DB.prepare(`SELECT t.*, c.name as customer_name, a.name as agent_name FROM tickets t LEFT JOIN customers c ON t.customer_id = c.id LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.tenant_id = ? AND t.status = ? ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.created_at DESC LIMIT 50`).bind(tid, s).all();
+      board[s] = rows.results;
+    }
+    return c.json({ board });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/tickets/board', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return c.json({ board });
 });
 
 app.post('/tickets', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
 
-  // Auto-increment ticket number with retry for race condition safety
-  let ticketNumber = 0;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const last = await c.env.DB.prepare('SELECT MAX(ticket_number) as max_num FROM tickets WHERE tenant_id = ?').bind(tid).first();
-    ticketNumber = ((last as Record<string, unknown>)?.max_num as number || 0) + 1 + attempt;
-    break; // ticket_number has no UNIQUE constraint, so no retry needed — but offset by attempt if we ever add one
-  }
-
-  // Find applicable SLA
-  let slaId: string | null = null;
-  let firstResponseDue: string | null = null;
-  let resolutionDue: string | null = null;
-  const priority = (body.priority as string) || 'medium';
-  const sla = await c.env.DB.prepare('SELECT * FROM sla_policies WHERE tenant_id = ? AND priority = ? LIMIT 1').bind(tid, priority).first();
-  if (sla) {
-    slaId = sla.id as string;
-    const now = new Date();
-    firstResponseDue = new Date(now.getTime() + (sla.first_response_minutes as number) * 60000).toISOString();
-    resolutionDue = new Date(now.getTime() + (sla.resolution_minutes as number) * 60000).toISOString();
-  }
-
-  await c.env.DB.prepare(`INSERT INTO tickets (id, tenant_id, ticket_number, subject, description, status, priority, channel, customer_id, assigned_agent_id, assigned_team_id, category, tags, custom_fields, sla_policy_id, first_response_due, resolution_due) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-    id, tid, ticketNumber, body.subject, body.description || null, priority, body.channel || 'email',
-    body.customer_id || null, body.assigned_agent_id || null, body.assigned_team_id || null,
-    body.category || null, JSON.stringify(body.tags || []), JSON.stringify(body.custom_fields || {}),
-    slaId, firstResponseDue, resolutionDue
-  ).run();
-
-  // Update customer ticket count
-  if (body.customer_id) {
-    await c.env.DB.prepare('UPDATE customers SET total_tickets = total_tickets + 1, last_contacted_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?').bind(body.customer_id).run();
-  }
-
-  // Auto-assign if not specified
-  if (!body.assigned_agent_id && !body.assigned_team_id) {
-    const available = await c.env.DB.prepare("SELECT a.id, COUNT(t.id) as load FROM agents a LEFT JOIN tickets t ON a.id = t.assigned_agent_id AND t.status IN ('open','pending','in_progress') WHERE a.tenant_id = ? AND a.is_active = 1 AND a.status = 'online' GROUP BY a.id HAVING load < a.max_tickets ORDER BY load ASC LIMIT 1").bind(tid).first();
-    if (available) {
-      await c.env.DB.prepare('UPDATE tickets SET assigned_agent_id = ? WHERE id = ?').bind(available.id, id).run();
+    // Auto-increment ticket number with retry for race condition safety
+    let ticketNumber = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const last = await c.env.DB.prepare('SELECT MAX(ticket_number) as max_num FROM tickets WHERE tenant_id = ?').bind(tid).first();
+      ticketNumber = ((last as Record<string, unknown>)?.max_num as number || 0) + 1 + attempt;
+      break; // ticket_number has no UNIQUE constraint, so no retry needed — but offset by attempt if we ever add one
     }
+
+    // Find applicable SLA
+    let slaId: string | null = null;
+    let firstResponseDue: string | null = null;
+    let resolutionDue: string | null = null;
+    const priority = (body.priority as string) || 'medium';
+    const sla = await c.env.DB.prepare('SELECT * FROM sla_policies WHERE tenant_id = ? AND priority = ? LIMIT 1').bind(tid, priority).first();
+    if (sla) {
+      slaId = sla.id as string;
+      const now = new Date();
+      firstResponseDue = new Date(now.getTime() + (sla.first_response_minutes as number) * 60000).toISOString();
+      resolutionDue = new Date(now.getTime() + (sla.resolution_minutes as number) * 60000).toISOString();
+    }
+
+    await c.env.DB.prepare(`INSERT INTO tickets (id, tenant_id, ticket_number, subject, description, status, priority, channel, customer_id, assigned_agent_id, assigned_team_id, category, tags, custom_fields, sla_policy_id, first_response_due, resolution_due) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+      id, tid, ticketNumber, body.subject, body.description || null, priority, body.channel || 'email',
+      body.customer_id || null, body.assigned_agent_id || null, body.assigned_team_id || null,
+      body.category || null, JSON.stringify(body.tags || []), JSON.stringify(body.custom_fields || {}),
+      slaId, firstResponseDue, resolutionDue
+    ).run();
+
+    // Update customer ticket count
+    if (body.customer_id) {
+      await c.env.DB.prepare('UPDATE customers SET total_tickets = total_tickets + 1, last_contacted_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?').bind(body.customer_id).run();
+    }
+
+    // Auto-assign if not specified
+    if (!body.assigned_agent_id && !body.assigned_team_id) {
+      const available = await c.env.DB.prepare("SELECT a.id, COUNT(t.id) as load FROM agents a LEFT JOIN tickets t ON a.id = t.assigned_agent_id AND t.status IN ('open','pending','in_progress') WHERE a.tenant_id = ? AND a.is_active = 1 AND a.status = 'online' GROUP BY a.id HAVING load < a.max_tickets ORDER BY load ASC LIMIT 1").bind(tid).first();
+      if (available) {
+        await c.env.DB.prepare('UPDATE tickets SET assigned_agent_id = ? WHERE id = ?').bind(available.id, id).run();
+      }
+    }
+
+    // Log activity
+    await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, actor_type, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', id, 'created', 'system', 'api').run();
+
+    log('info', 'Ticket created', { ticket_id: id, ticket_number: ticketNumber, tenant_id: tid });
+    return c.json({ id, ticket_number: ticketNumber, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-
-  // Log activity
-  await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, actor_type, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', id, 'created', 'system', 'api').run();
-
-  log('info', 'Ticket created', { ticket_id: id, ticket_number: ticketNumber, tenant_id: tid });
-  return c.json({ id, ticket_number: ticketNumber, created: true }, 201);
 });
 
 app.get('/tickets/:id', async (c) => {
-  const tid = getTenantId(c);
-  const ticket = await c.env.DB.prepare(`SELECT t.*, c.name as customer_name, c.email as customer_email, a.name as agent_name FROM tickets t LEFT JOIN customers c ON t.customer_id = c.id LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.id = ? AND t.tenant_id = ?`).bind(c.req.param('id'), tid).first();
-  if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
+  try {
+    const tid = getTenantId(c);
+    const ticket = await c.env.DB.prepare(`SELECT t.*, c.name as customer_name, c.email as customer_email, a.name as agent_name FROM tickets t LEFT JOIN customers c ON t.customer_id = c.id LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.id = ? AND t.tenant_id = ?`).bind(c.req.param('id'), tid).first();
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
 
-  const messages = await c.env.DB.prepare('SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').bind(ticket.id).all();
-  const activity = await c.env.DB.prepare("SELECT * FROM activity_log WHERE entity_type = 'ticket' AND entity_id = ? ORDER BY created_at DESC LIMIT 20").bind(ticket.id).all();
+    const messages = await c.env.DB.prepare('SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').bind(ticket.id).all();
+    const activity = await c.env.DB.prepare("SELECT * FROM activity_log WHERE entity_type = 'ticket' AND entity_id = ? ORDER BY created_at DESC LIMIT 20").bind(ticket.id).all();
 
-  return c.json({ ...ticket, messages: messages.results, activity: activity.results });
+    return c.json({ ...ticket, messages: messages.results, activity: activity.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/tickets/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.put('/tickets/:id', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const fields: string[] = [];
-  const vals: unknown[] = [];
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const fields: string[] = [];
+    const vals: unknown[] = [];
 
-  for (const [k, v] of Object.entries(body)) {
-    if (['subject', 'description', 'status', 'priority', 'channel', 'category', 'subcategory', 'customer_id', 'assigned_agent_id', 'assigned_team_id', 'is_spam'].includes(k)) {
-      fields.push(`${k} = ?`); vals.push(v);
+    for (const [k, v] of Object.entries(body)) {
+      if (['subject', 'description', 'status', 'priority', 'channel', 'category', 'subcategory', 'customer_id', 'assigned_agent_id', 'assigned_team_id', 'is_spam'].includes(k)) {
+        fields.push(`${k} = ?`); vals.push(v);
+      }
+      if (k === 'tags' || k === 'custom_fields') { fields.push(`${k} = ?`); vals.push(JSON.stringify(v)); }
     }
-    if (k === 'tags' || k === 'custom_fields') { fields.push(`${k} = ?`); vals.push(JSON.stringify(v)); }
-  }
 
-  // Auto-set timestamps on status changes
-  if (body.status === 'resolved') { fields.push("resolved_at = datetime('now')"); }
-  if (body.status === 'closed') { fields.push("closed_at = datetime('now')"); }
-  if (body.status === 'open') {
-    const ticket = await c.env.DB.prepare('SELECT status FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
-    if (ticket && (ticket.status === 'resolved' || ticket.status === 'closed')) {
-      fields.push('reopened_count = reopened_count + 1');
+    // Auto-set timestamps on status changes
+    if (body.status === 'resolved') { fields.push("resolved_at = datetime('now')"); }
+    if (body.status === 'closed') { fields.push("closed_at = datetime('now')"); }
+    if (body.status === 'open') {
+      const ticket = await c.env.DB.prepare('SELECT status FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
+      if (ticket && (ticket.status === 'resolved' || ticket.status === 'closed')) {
+        fields.push('reopened_count = reopened_count + 1');
+      }
     }
+
+    if (fields.length === 0) return c.json({ error: 'No fields' }, 400);
+    fields.push("updated_at = datetime('now')");
+    vals.push(c.req.param('id'), tid);
+    await c.env.DB.prepare(`UPDATE tickets SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
+
+    // Log
+    await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', c.req.param('id'), 'updated', JSON.stringify(body)).run();
+
+    return c.json({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'PUT /tickets/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-
-  if (fields.length === 0) return c.json({ error: 'No fields' }, 400);
-  fields.push("updated_at = datetime('now')");
-  vals.push(c.req.param('id'), tid);
-  await c.env.DB.prepare(`UPDATE tickets SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
-
-  // Log
-  await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', c.req.param('id'), 'updated', JSON.stringify(body)).run();
-
-  return c.json({ updated: true });
 });
 
 // Assign ticket
 app.post('/tickets/:id/assign', async (c) => {
-  const tid = getTenantId(c);
-  const body = await c.req.json() as Record<string, unknown>;
-  const fields: string[] = ["updated_at = datetime('now')"];
-  const vals: unknown[] = [];
-  if (body.agent_id) { fields.push('assigned_agent_id = ?'); vals.push(body.agent_id); }
-  if (body.team_id) { fields.push('assigned_team_id = ?'); vals.push(body.team_id); }
-  vals.push(c.req.param('id'), tid);
-  await c.env.DB.prepare(`UPDATE tickets SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
-  await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', c.req.param('id'), 'assigned', JSON.stringify(body)).run();
-  return c.json({ assigned: true });
+  try {
+    const tid = getTenantId(c);
+    const body = await c.req.json() as Record<string, unknown>;
+    const fields: string[] = ["updated_at = datetime('now')"];
+    const vals: unknown[] = [];
+    if (body.agent_id) { fields.push('assigned_agent_id = ?'); vals.push(body.agent_id); }
+    if (body.team_id) { fields.push('assigned_team_id = ?'); vals.push(body.team_id); }
+    vals.push(c.req.param('id'), tid);
+    await c.env.DB.prepare(`UPDATE tickets SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
+    await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', c.req.param('id'), 'assigned', JSON.stringify(body)).run();
+    return c.json({ assigned: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets/:id/assign', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // Merge tickets
 app.post('/tickets/:id/merge', async (c) => {
-  const tid = getTenantId(c);
-  const body = await c.req.json() as { merge_ticket_id: string };
-  await c.env.DB.prepare("UPDATE tickets SET merged_into_id = ?, status = 'closed', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND tenant_id = ?").bind(c.req.param('id'), body.merge_ticket_id, tid).run();
-  // Move messages
-  await c.env.DB.prepare('UPDATE ticket_messages SET ticket_id = ? WHERE ticket_id = ?').bind(body.merge_ticket_id, c.req.param('id')).run();
-  return c.json({ merged: true });
+  try {
+    const tid = getTenantId(c);
+    const body = await c.req.json() as { merge_ticket_id: string };
+    await c.env.DB.prepare("UPDATE tickets SET merged_into_id = ?, status = 'closed', closed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND tenant_id = ?").bind(c.req.param('id'), body.merge_ticket_id, tid).run();
+    // Move messages
+    await c.env.DB.prepare('UPDATE ticket_messages SET ticket_id = ? WHERE ticket_id = ?').bind(body.merge_ticket_id, c.req.param('id')).run();
+    return c.json({ merged: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets/:id/merge', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/tickets/:id', async (c) => {
-  const tid = getTenantId(c);
-  await c.env.DB.prepare('DELETE FROM ticket_messages WHERE ticket_id = ?').bind(c.req.param('id')).run();
-  await c.env.DB.prepare('DELETE FROM satisfaction_surveys WHERE ticket_id = ?').bind(c.req.param('id')).run();
-  await c.env.DB.prepare("DELETE FROM activity_log WHERE entity_type = 'ticket' AND entity_id = ?").bind(c.req.param('id')).run();
-  await c.env.DB.prepare('DELETE FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  return c.json({ deleted: true });
+  try {
+    const tid = getTenantId(c);
+    await c.env.DB.prepare('DELETE FROM ticket_messages WHERE ticket_id = ?').bind(c.req.param('id')).run();
+    await c.env.DB.prepare('DELETE FROM satisfaction_surveys WHERE ticket_id = ?').bind(c.req.param('id')).run();
+    await c.env.DB.prepare("DELETE FROM activity_log WHERE entity_type = 'ticket' AND entity_id = ?").bind(c.req.param('id')).run();
+    await c.env.DB.prepare('DELETE FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    return c.json({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'DELETE /tickets/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
 // TICKET MESSAGES (replies)
 // ═══════════════════════════════════════════════════════════════════
 app.get('/tickets/:id/messages', async (c) => {
-  const rows = await c.env.DB.prepare('SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').bind(c.req.param('id')).all();
-  return c.json({ messages: rows.results });
+  try {
+    const rows = await c.env.DB.prepare('SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').bind(c.req.param('id')).all();
+    return c.json({ messages: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/tickets/:id/messages', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/tickets/:id/messages', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
-  const ticketId = c.req.param('id');
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
+    const ticketId = c.req.param('id');
 
-  await c.env.DB.prepare('INSERT INTO ticket_messages (id, ticket_id, sender_type, sender_id, sender_name, body, body_html, is_internal, channel, ai_generated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
-    id, ticketId, body.sender_type || 'agent', body.sender_id || null, body.sender_name || null,
-    body.body, body.body_html || null, body.is_internal ? 1 : 0, body.channel || 'email', body.ai_generated ? 1 : 0
-  ).run();
+    await c.env.DB.prepare('INSERT INTO ticket_messages (id, ticket_id, sender_type, sender_id, sender_name, body, body_html, is_internal, channel, ai_generated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(
+      id, ticketId, body.sender_type || 'agent', body.sender_id || null, body.sender_name || null,
+      body.body, body.body_html || null, body.is_internal ? 1 : 0, body.channel || 'email', body.ai_generated ? 1 : 0
+    ).run();
 
-  // Track first response time
-  if ((body.sender_type === 'agent') && !body.is_internal) {
-    const ticket = await c.env.DB.prepare('SELECT first_response_at FROM tickets WHERE id = ?').bind(ticketId).first();
-    if (ticket && !ticket.first_response_at) {
-      await c.env.DB.prepare("UPDATE tickets SET first_response_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").bind(ticketId).run();
+    // Track first response time
+    if ((body.sender_type === 'agent') && !body.is_internal) {
+      const ticket = await c.env.DB.prepare('SELECT first_response_at FROM tickets WHERE id = ?').bind(ticketId).first();
+      if (ticket && !ticket.first_response_at) {
+        await c.env.DB.prepare("UPDATE tickets SET first_response_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").bind(ticketId).run();
+      }
     }
+
+    // Update ticket status
+    if (body.sender_type === 'agent' && !body.is_internal) {
+      await c.env.DB.prepare("UPDATE tickets SET status = 'pending', updated_at = datetime('now') WHERE id = ? AND status = 'open'").bind(ticketId).run();
+    } else if (body.sender_type === 'customer') {
+      await c.env.DB.prepare("UPDATE tickets SET status = 'open', updated_at = datetime('now') WHERE id = ? AND status IN ('pending','waiting')").bind(ticketId).run();
+    }
+
+    await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, actor_type, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', ticketId, body.is_internal ? 'internal_note' : 'reply', body.sender_type || 'agent', body.sender_id || 'api').run();
+
+    return c.json({ id, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets/:id/messages', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-
-  // Update ticket status
-  if (body.sender_type === 'agent' && !body.is_internal) {
-    await c.env.DB.prepare("UPDATE tickets SET status = 'pending', updated_at = datetime('now') WHERE id = ? AND status = 'open'").bind(ticketId).run();
-  } else if (body.sender_type === 'customer') {
-    await c.env.DB.prepare("UPDATE tickets SET status = 'open', updated_at = datetime('now') WHERE id = ? AND status IN ('pending','waiting')").bind(ticketId).run();
-  }
-
-  await c.env.DB.prepare('INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, actor_type, actor_id) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(generateId(), tid, 'ticket', ticketId, body.is_internal ? 'internal_note' : 'reply', body.sender_type || 'agent', body.sender_id || 'api').run();
-
-  return c.json({ id, created: true }, 201);
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -535,11 +675,11 @@ app.post('/tickets/:id/messages', async (c) => {
 
 // AI auto-categorize ticket
 app.post('/tickets/:id/ai/categorize', async (c) => {
-  const tid = getTenantId(c);
-  const ticket = await c.env.DB.prepare('SELECT subject, description FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
-  if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
-
   try {
+    const tid = getTenantId(c);
+    const ticket = await c.env.DB.prepare('SELECT subject, description FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
+
     const resp = await c.env.ENGINE_RUNTIME.fetch('https://engine/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -556,27 +696,27 @@ app.post('/tickets/:id/ai/categorize', async (c) => {
       return c.json({ categorized: true, ...parsed });
     }
     return c.json({ categorized: false, raw: answer });
-  } catch (e) {
-    log('error', 'AI categorize failed', { error: (e as Error).message });
-    return c.json({ error: 'AI categorization failed' }, 500);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets/:id/ai/categorize', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
 });
 
 // AI suggest response
 app.post('/tickets/:id/ai/suggest', async (c) => {
-  const tid = getTenantId(c);
-  const ticket = await c.env.DB.prepare('SELECT subject, description, category FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
-  if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
-
-  // Get conversation history
-  const messages = await c.env.DB.prepare('SELECT sender_type, body FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC LIMIT 10').bind(c.req.param('id')).all();
-  const history = (messages.results || []).map((m: Record<string, unknown>) => `[${m.sender_type}]: ${(m.body as string).slice(0, 200)}`).join('\n');
-
-  // Search KB for relevant articles
-  const kbResults = await c.env.DB.prepare("SELECT title, body FROM kb_articles WHERE tenant_id = ? AND status = 'published' AND (title LIKE ? OR body LIKE ?) LIMIT 3").bind(tid, `%${(ticket.subject as string).split(' ').slice(0, 3).join('%')}%`, `%${(ticket.subject as string).split(' ').slice(0, 3).join('%')}%`).all();
-  const kbContext = (kbResults.results || []).map((a: Record<string, unknown>) => `Article: ${a.title}\n${(a.body as string).slice(0, 300)}`).join('\n\n');
-
   try {
+    const tid = getTenantId(c);
+    const ticket = await c.env.DB.prepare('SELECT subject, description, category FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
+
+    // Get conversation history
+    const messages = await c.env.DB.prepare('SELECT sender_type, body FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC LIMIT 10').bind(c.req.param('id')).all();
+    const history = (messages.results || []).map((m: Record<string, unknown>) => `[${m.sender_type}]: ${(m.body as string).slice(0, 200)}`).join('\n');
+
+    // Search KB for relevant articles
+    const kbResults = await c.env.DB.prepare("SELECT title, body FROM kb_articles WHERE tenant_id = ? AND status = 'published' AND (title LIKE ? OR body LIKE ?) LIMIT 3").bind(tid, `%${(ticket.subject as string).split(' ').slice(0, 3).join('%')}%`, `%${(ticket.subject as string).split(' ').slice(0, 3).join('%')}%`).all();
+    const kbContext = (kbResults.results || []).map((a: Record<string, unknown>) => `Article: ${a.title}\n${(a.body as string).slice(0, 300)}`).join('\n\n');
+
     const resp = await c.env.ENGINE_RUNTIME.fetch('https://engine/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -587,22 +727,22 @@ app.post('/tickets/:id/ai/suggest', async (c) => {
 
     await c.env.DB.prepare("UPDATE tickets SET ai_suggested_response = ?, updated_at = datetime('now') WHERE id = ?").bind(suggestion, c.req.param('id')).run();
     return c.json({ suggestion });
-  } catch (e) {
-    log('error', 'AI suggest failed', { error: (e as Error).message });
-    return c.json({ error: 'AI suggestion failed' }, 500);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets/:id/ai/suggest', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
 });
 
 // AI summarize ticket
 app.post('/tickets/:id/ai/summarize', async (c) => {
-  const tid = getTenantId(c);
-  const ticket = await c.env.DB.prepare('SELECT subject, description FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
-  if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
-
-  const messages = await c.env.DB.prepare('SELECT sender_type, body, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').bind(c.req.param('id')).all();
-  const convo = (messages.results || []).map((m: Record<string, unknown>) => `[${m.sender_type} ${m.created_at}]: ${(m.body as string).slice(0, 300)}`).join('\n');
-
   try {
+    const tid = getTenantId(c);
+    const ticket = await c.env.DB.prepare('SELECT subject, description FROM tickets WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).first();
+    if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
+
+    const messages = await c.env.DB.prepare('SELECT sender_type, body, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').bind(c.req.param('id')).all();
+    const convo = (messages.results || []).map((m: Record<string, unknown>) => `[${m.sender_type} ${m.created_at}]: ${(m.body as string).slice(0, 300)}`).join('\n');
+
     const resp = await c.env.ENGINE_RUNTIME.fetch('https://engine/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -612,9 +752,9 @@ app.post('/tickets/:id/ai/summarize', async (c) => {
     const summary = (data.answer as string) || '';
     await c.env.DB.prepare("UPDATE tickets SET ai_summary = ?, updated_at = datetime('now') WHERE id = ?").bind(summary, c.req.param('id')).run();
     return c.json({ summary });
-  } catch (e) {
-    log('error', 'AI summarize failed', { error: (e as Error).message });
-    return c.json({ error: 'AI summarization failed' }, 500);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /tickets/:id/ai/summarize', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
 });
 
@@ -622,32 +762,52 @@ app.post('/tickets/:id/ai/summarize', async (c) => {
 // SLA POLICIES
 // ═══════════════════════════════════════════════════════════════════
 app.get('/sla', async (c) => {
-  const tid = getTenantId(c);
-  const rows = await c.env.DB.prepare('SELECT * FROM sla_policies WHERE tenant_id = ? ORDER BY priority').bind(tid).all();
-  return c.json({ policies: rows.results });
+  try {
+    const tid = getTenantId(c);
+    const rows = await c.env.DB.prepare('SELECT * FROM sla_policies WHERE tenant_id = ? ORDER BY priority').bind(tid).all();
+    return c.json({ policies: rows.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/sla', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/sla', async (c) => {
-  const tid = getTenantId(c);
-  const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
-  const id = generateId();
-  await c.env.DB.prepare('INSERT INTO sla_policies (id, tenant_id, name, description, priority, first_response_minutes, resolution_minutes, business_hours_only, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, tid, body.name, body.description || null, body.priority, body.first_response_minutes, body.resolution_minutes, body.business_hours_only ? 1 : 0, body.is_default ? 1 : 0).run();
-  return c.json({ id, created: true }, 201);
+  try {
+    const tid = getTenantId(c);
+    const body = sanitizeBody(await c.req.json()) as Record<string, unknown>;
+    const id = generateId();
+    await c.env.DB.prepare('INSERT INTO sla_policies (id, tenant_id, name, description, priority, first_response_minutes, resolution_minutes, business_hours_only, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, tid, body.name, body.description || null, body.priority, body.first_response_minutes, body.resolution_minutes, body.business_hours_only ? 1 : 0, body.is_default ? 1 : 0).run();
+    return c.json({ id, created: true }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'POST /sla', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.delete('/sla/:id', async (c) => {
-  const tid = getTenantId(c);
-  await c.env.DB.prepare('DELETE FROM sla_policies WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
-  return c.json({ deleted: true });
+  try {
+    const tid = getTenantId(c);
+    await c.env.DB.prepare('DELETE FROM sla_policies WHERE id = ? AND tenant_id = ?').bind(c.req.param('id'), tid).run();
+    return c.json({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'DELETE /sla/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // SLA breach check
 app.get('/sla/breaches', async (c) => {
-  const tid = getTenantId(c);
-  const now = new Date().toISOString();
-  const responseBreaches = await c.env.DB.prepare("SELECT t.id, t.ticket_number, t.subject, t.priority, t.first_response_due, t.assigned_agent_id, a.name as agent_name FROM tickets t LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.tenant_id = ? AND t.first_response_at IS NULL AND t.first_response_due < ? AND t.status NOT IN ('resolved','closed') ORDER BY t.first_response_due ASC").bind(tid, now).all();
-  const resolutionBreaches = await c.env.DB.prepare("SELECT t.id, t.ticket_number, t.subject, t.priority, t.resolution_due, t.assigned_agent_id, a.name as agent_name FROM tickets t LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.tenant_id = ? AND t.resolved_at IS NULL AND t.resolution_due < ? AND t.status NOT IN ('resolved','closed') ORDER BY t.resolution_due ASC").bind(tid, now).all();
-  return c.json({ response_breaches: responseBreaches.results, resolution_breaches: resolutionBreaches.results });
+  try {
+    const tid = getTenantId(c);
+    const now = new Date().toISOString();
+    const responseBreaches = await c.env.DB.prepare("SELECT t.id, t.ticket_number, t.subject, t.priority, t.first_response_due, t.assigned_agent_id, a.name as agent_name FROM tickets t LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.tenant_id = ? AND t.first_response_at IS NULL AND t.first_response_due < ? AND t.status NOT IN ('resolved','closed') ORDER BY t.first_response_due ASC").bind(tid, now).all();
+    const resolutionBreaches = await c.env.DB.prepare("SELECT t.id, t.ticket_number, t.subject, t.priority, t.resolution_due, t.assigned_agent_id, a.name as agent_name FROM tickets t LEFT JOIN agents a ON t.assigned_agent_id = a.id WHERE t.tenant_id = ? AND t.resolved_at IS NULL AND t.resolution_due < ? AND t.status NOT IN ('resolved','closed') ORDER BY t.resolution_due ASC").bind(tid, now).all();
+    return c.json({ response_breaches: responseBreaches.results, resolution_breaches: resolutionBreaches.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: '/sla/breaches', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════

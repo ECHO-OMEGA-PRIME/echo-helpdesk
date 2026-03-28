@@ -26,3 +26,7 @@ service = "echo-shared-brain"
 [[services]]
 binding = "SPEAK_CLOUD"
 service = "echo-speak-cloud"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "echo_metrics"
