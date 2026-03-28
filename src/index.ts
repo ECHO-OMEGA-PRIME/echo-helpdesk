@@ -1,8 +1,9 @@
 /**
- * Echo Helpdesk v1.1.0 — AI-Powered Customer Support Platform
+ * Echo Helpdesk v2.0.0 — AI-Powered Customer Support Platform
  * =============================================================
  * Ticket management, SLA tracking, AI auto-responses, knowledge base,
  * multi-channel support, agent assignment, automations, CSAT surveys.
+ * Stripe payment collection for paid support tiers (free/pro/enterprise).
  * Competes with Zendesk, Freshdesk, Intercom at 1/10th the cost.
  */
 
@@ -15,6 +16,9 @@ interface Env {
   SHARED_BRAIN: Fetcher;
   SPEAK_CLOUD: Fetcher;
   ECHO_API_KEY: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  HELPDESK_HMAC_KEY?: string;
 }
 
 type HonoEnv = { Bindings: Env };
@@ -74,6 +78,40 @@ function sanitizeBody(body: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+// ─── Stripe Helpers ─────────────────────────────────────────────────
+async function generatePaymentToken(data: string, secret: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(data));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyStripeSignature(payload: string, sigHeader: string, secret: string): Promise<boolean> {
+  try {
+    const parts = sigHeader.split(',').reduce((acc, part) => {
+      const [k, v] = part.split('=');
+      if (k === 't') acc.timestamp = v;
+      if (k === 'v1') acc.signature = v;
+      return acc;
+    }, { timestamp: '', signature: '' } as { timestamp: string; signature: string });
+    if (!parts.timestamp || !parts.signature) return false;
+    // Reject signatures older than 5 minutes
+    const age = Math.floor(Date.now() / 1000) - parseInt(parts.timestamp);
+    if (age > 300) return false;
+    const signedPayload = `${parts.timestamp}.${payload}`;
+    const expected = await generatePaymentToken(signedPayload, secret);
+    return expected === parts.signature;
+  } catch {
+    return false;
+  }
+}
+
+const HELPDESK_PLANS = {
+  free: { name: 'Free', price_monthly: 0, price_id: null as string | null, features: ['5 agents', '100 tickets/mo', 'Email support', 'Basic analytics'] },
+  pro: { name: 'Pro', price_monthly: 4900, price_id: 'price_helpdesk_pro_monthly', features: ['25 agents', 'Unlimited tickets', 'Multi-channel', 'AI auto-categorize', 'SLA tracking', 'Priority support', 'Custom automations'] },
+  enterprise: { name: 'Enterprise', price_monthly: 19900, price_id: 'price_helpdesk_enterprise_monthly', features: ['Unlimited agents', 'Unlimited tickets', 'All channels', 'AI auto-response', 'Advanced SLA', 'Custom branding', 'API access', 'Dedicated support', 'SSO/SAML', 'Audit logs'] },
+} as const;
+
 // ─── CORS ───────────────────────────────────────────────────────────
 app.use('*', async (c, next) => {
   await next();
@@ -106,8 +144,9 @@ app.use('*', async (c, next) => {
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
   const method = c.req.method;
-  // Public: GET, OPTIONS, health
+  // Public: GET, OPTIONS, health, /public/*, /webhooks/stripe
   if (method === 'GET' || method === 'OPTIONS' || method === 'HEAD' || path === '/health') return next();
+  if (path.startsWith('/public/') || path === '/webhooks/stripe') return next();
   // Writes require API key
   const apiKey = c.req.header('X-Echo-API-Key') || '';
   const bearer = (c.req.header('Authorization') || '').replace('Bearer ', '');
@@ -124,14 +163,14 @@ function getTenantId(c: { req: { header: (n: string) => string | undefined; quer
 }
 
 // ─── Health ─────────────────────────────────────────────────────────
-app.get('/', (c) => c.json({ service: 'echo-helpdesk', version: '1.0.0', status: 'operational' }));
+app.get('/', (c) => c.json({ service: 'echo-helpdesk', version: '2.0.0', status: 'operational' }));
 app.get('/health', async (c) => {
   try {
     await c.env.DB.prepare('SELECT 1').first();
-    return c.json({ ok: true, service: 'echo-helpdesk', version: '1.1.0', d1: 'connected', ts: new Date().toISOString() });
+    return c.json({ ok: true, service: 'echo-helpdesk', version: '2.0.0', d1: 'connected', stripe: !!c.env.STRIPE_SECRET_KEY, ts: new Date().toISOString() });
   } catch (e: any) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'Health D1 failed', error: e?.message }));
-    return c.json({ ok: true, service: 'echo-helpdesk', version: '1.1.0', status: 'degraded', d1: 'error', error: 'D1 query failed', ts: new Date().toISOString() });
+    return c.json({ ok: true, service: 'echo-helpdesk', version: '2.0.0', status: 'degraded', d1: 'error', stripe: !!c.env.STRIPE_SECRET_KEY, error: 'D1 query failed', ts: new Date().toISOString() });
   }
 });
 
@@ -1288,6 +1327,267 @@ async function cronHandler(env: Env) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-helpdesk', message: 'D1 query failed', endpoint: 'scheduled/cron', error: e?.message }));
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// STRIPE PAYMENT COLLECTION
+// ═══════════════════════════════════════════════════════════════════
+
+// POST /tenants/:id/upgrade — Create Stripe Checkout Session for plan upgrade
+app.post('/tenants/:id/upgrade', async (c) => {
+  try {
+    const tenantId = c.req.param('id');
+    const body = await c.req.json() as { plan: string; success_url?: string; cancel_url?: string };
+    const targetPlan = body.plan as keyof typeof HELPDESK_PLANS;
+
+    if (!c.env.STRIPE_SECRET_KEY) return c.json({ error: 'Stripe not configured' }, 503);
+    if (!targetPlan || !HELPDESK_PLANS[targetPlan]) return c.json({ error: 'Invalid plan. Choose: free, pro, enterprise' }, 400);
+    if (targetPlan === 'free') return c.json({ error: 'Cannot checkout for free plan. Use downgrade.' }, 400);
+
+    const tenant = await c.env.DB.prepare('SELECT * FROM tenants WHERE id = ?').bind(tenantId).first();
+    if (!tenant) return c.json({ error: 'Tenant not found' }, 404);
+    if (tenant.plan === targetPlan) return c.json({ error: `Already on ${targetPlan} plan` }, 400);
+
+    const planInfo = HELPDESK_PLANS[targetPlan];
+
+    // Generate HMAC payment token for verification
+    const tokenData = `${tenantId}:${targetPlan}:${Date.now()}`;
+    const token = c.env.HELPDESK_HMAC_KEY ? await generatePaymentToken(tokenData, c.env.HELPDESK_HMAC_KEY) : 'no-hmac';
+
+    // Create or reuse Stripe customer
+    let stripeCustomerId = tenant.stripe_customer_id as string | null;
+    if (!stripeCustomerId) {
+      const custParams = new URLSearchParams();
+      custParams.append('name', (tenant.name as string) || tenantId);
+      custParams.append('metadata[tenant_id]', tenantId);
+      custParams.append('metadata[domain]', (tenant.domain as string) || '');
+
+      const custResp = await fetch('https://api.stripe.com/v1/customers', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: custParams.toString(),
+      });
+      const custData = await custResp.json() as Record<string, unknown>;
+      if (!custResp.ok) {
+        log('error', 'Stripe customer creation failed', { tenant_id: tenantId, error: custData });
+        return c.json({ error: 'Failed to create Stripe customer' }, 502);
+      }
+      stripeCustomerId = custData.id as string;
+      await c.env.DB.prepare('UPDATE tenants SET stripe_customer_id = ? WHERE id = ?').bind(stripeCustomerId, tenantId).run();
+    }
+
+    // Create Checkout Session
+    const params = new URLSearchParams();
+    params.append('mode', 'subscription');
+    params.append('customer', stripeCustomerId);
+    params.append('line_items[0][price]', planInfo.price_id!);
+    params.append('line_items[0][quantity]', '1');
+    params.append('metadata[tenant_id]', tenantId);
+    params.append('metadata[target_plan]', targetPlan);
+    params.append('metadata[payment_token]', token);
+    params.append('success_url', body.success_url || 'https://echo-ept.com/helpdesk/upgrade-success?session_id={CHECKOUT_SESSION_ID}');
+    params.append('cancel_url', body.cancel_url || 'https://echo-ept.com/helpdesk/pricing');
+
+    const resp = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    const session = await resp.json() as Record<string, unknown>;
+    if (!resp.ok) {
+      log('error', 'Stripe checkout creation failed', { tenant_id: tenantId, plan: targetPlan, error: session });
+      return c.json({ error: 'Failed to create checkout session' }, 502);
+    }
+
+    log('info', 'Stripe checkout created', { tenant_id: tenantId, plan: targetPlan, session_id: session.id });
+    return c.json({ checkout_url: session.url, session_id: session.id, plan: targetPlan });
+  } catch (e: any) {
+    log('error', 'Upgrade endpoint failed', { tenant_id: c.req.param('id'), error: e?.message });
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// POST /webhooks/stripe — Stripe webhook handler
+app.post('/webhooks/stripe', async (c) => {
+  try {
+    if (!c.env.STRIPE_SECRET_KEY || !c.env.STRIPE_WEBHOOK_SECRET) {
+      return c.json({ error: 'Stripe not configured' }, 503);
+    }
+
+    const rawBody = await c.req.text();
+    const sigHeader = c.req.header('Stripe-Signature') || '';
+
+    const valid = await verifyStripeSignature(rawBody, sigHeader, c.env.STRIPE_WEBHOOK_SECRET);
+    if (!valid) {
+      log('warn', 'Stripe webhook signature verification failed');
+      return c.json({ error: 'Invalid signature' }, 400);
+    }
+
+    const event = JSON.parse(rawBody) as { type: string; data: { object: Record<string, unknown> } };
+    log('info', 'Stripe webhook received', { type: event.type });
+
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const tenantId = (session.metadata as Record<string, string>)?.tenant_id;
+        const targetPlan = (session.metadata as Record<string, string>)?.target_plan;
+        const subscriptionId = session.subscription as string;
+        const customerId = session.customer as string;
+
+        if (!tenantId || !targetPlan) {
+          log('warn', 'Stripe checkout missing metadata', { session_id: session.id });
+          break;
+        }
+
+        // Upgrade tenant plan
+        await c.env.DB.prepare(
+          "UPDATE tenants SET plan = ?, stripe_customer_id = ?, stripe_subscription_id = ?, plan_expires_at = NULL WHERE id = ?"
+        ).bind(targetPlan, customerId, subscriptionId, tenantId).run();
+
+        // Log activity
+        await c.env.DB.prepare(
+          'INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(generateId(), tenantId, 'tenant', tenantId, 'plan_upgraded', JSON.stringify({ plan: targetPlan, stripe_subscription_id: subscriptionId })).run();
+
+        log('info', 'Tenant upgraded via Stripe', { tenant_id: tenantId, plan: targetPlan, subscription_id: subscriptionId });
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object;
+        const customerId = sub.customer as string;
+
+        // Find tenant by stripe_customer_id
+        const tenant = await c.env.DB.prepare('SELECT id FROM tenants WHERE stripe_customer_id = ?').bind(customerId).first();
+        if (!tenant) {
+          log('warn', 'Stripe subscription deleted but no matching tenant', { customer_id: customerId });
+          break;
+        }
+
+        const tenantId = tenant.id as string;
+        // Downgrade to free
+        await c.env.DB.prepare(
+          "UPDATE tenants SET plan = 'free', stripe_subscription_id = NULL, plan_expires_at = datetime('now') WHERE id = ?"
+        ).bind(tenantId).run();
+
+        await c.env.DB.prepare(
+          'INSERT INTO activity_log (id, tenant_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(generateId(), tenantId, 'tenant', tenantId, 'plan_downgraded', JSON.stringify({ reason: 'subscription_deleted', previous_subscription: sub.id })).run();
+
+        log('info', 'Tenant downgraded (subscription deleted)', { tenant_id: tenantId, subscription_id: sub.id });
+        break;
+      }
+
+      default:
+        log('info', 'Stripe webhook unhandled event type', { type: event.type });
+    }
+
+    return c.json({ received: true });
+  } catch (e: any) {
+    log('error', 'Stripe webhook processing failed', { error: e?.message });
+    return c.json({ error: 'Webhook processing failed' }, 500);
+  }
+});
+
+// GET /public/pricing — Public pricing page
+app.get('/public/pricing', (c) => {
+  const stripeAvailable = !!c.env.STRIPE_SECRET_KEY;
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Echo Helpdesk — Pricing</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh}
+    .header{text-align:center;padding:60px 20px 40px}
+    .header h1{font-size:2.5rem;background:linear-gradient(135deg,#00d4ff,#7b2ff7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:10px}
+    .header p{color:#888;font-size:1.1rem}
+    .plans{display:flex;justify-content:center;gap:24px;flex-wrap:wrap;padding:0 20px 60px;max-width:1200px;margin:0 auto}
+    .plan{background:#12121a;border:1px solid #222;border-radius:16px;padding:32px;width:340px;position:relative;transition:transform .2s,border-color .2s}
+    .plan:hover{transform:translateY(-4px);border-color:#7b2ff7}
+    .plan.popular{border-color:#00d4ff;box-shadow:0 0 30px rgba(0,212,255,.15)}
+    .plan.popular::before{content:'MOST POPULAR';position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#00d4ff,#7b2ff7);color:#fff;padding:4px 16px;border-radius:20px;font-size:.75rem;font-weight:700;letter-spacing:1px}
+    .plan h2{font-size:1.4rem;margin-bottom:8px;color:#fff}
+    .price{font-size:2.5rem;font-weight:800;color:#fff;margin:16px 0 4px}
+    .price span{font-size:.9rem;color:#888;font-weight:400}
+    .features{list-style:none;margin:24px 0;padding:0}
+    .features li{padding:8px 0;border-bottom:1px solid #1a1a24;display:flex;align-items:center;gap:8px;font-size:.95rem}
+    .features li::before{content:'\\2713';color:#00d4ff;font-weight:700;font-size:.8rem}
+    .btn{display:block;width:100%;padding:14px;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;text-align:center;text-decoration:none;transition:opacity .2s}
+    .btn-free{background:#1a1a24;color:#e0e0e0}
+    .btn-pro{background:linear-gradient(135deg,#00d4ff,#7b2ff7);color:#fff}
+    .btn-enterprise{background:linear-gradient(135deg,#7b2ff7,#ff2d95);color:#fff}
+    .btn:hover{opacity:.85}
+    .footer{text-align:center;padding:20px;color:#555;font-size:.85rem}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Echo Helpdesk</h1>
+    <p>AI-powered customer support that scales with your business</p>
+  </div>
+  <div class="plans">
+    <div class="plan">
+      <h2>Free</h2>
+      <div class="price">$0<span>/mo</span></div>
+      <ul class="features">
+        ${HELPDESK_PLANS.free.features.map(f => `<li>${f}</li>`).join('')}
+      </ul>
+      <a class="btn btn-free" href="https://echo-ept.com/helpdesk/signup?plan=free">Get Started</a>
+    </div>
+    <div class="plan popular">
+      <h2>Pro</h2>
+      <div class="price">$49<span>/mo</span></div>
+      <ul class="features">
+        ${HELPDESK_PLANS.pro.features.map(f => `<li>${f}</li>`).join('')}
+      </ul>
+      <a class="btn btn-pro" href="${stripeAvailable ? '#" onclick="alert(\'Use POST /tenants/:id/upgrade with plan=pro to get checkout URL\')"' : 'https://echo-ept.com/helpdesk/signup?plan=pro"'}">Upgrade to Pro</a>
+    </div>
+    <div class="plan">
+      <h2>Enterprise</h2>
+      <div class="price">$199<span>/mo</span></div>
+      <ul class="features">
+        ${HELPDESK_PLANS.enterprise.features.map(f => `<li>${f}</li>`).join('')}
+      </ul>
+      <a class="btn btn-enterprise" href="${stripeAvailable ? '#" onclick="alert(\'Use POST /tenants/:id/upgrade with plan=enterprise to get checkout URL\')"' : 'https://echo-ept.com/helpdesk/signup?plan=enterprise"'}">Go Enterprise</a>
+    </div>
+  </div>
+  <div class="footer">
+    <p>Echo Helpdesk v2.0.0 &mdash; Echo Prime Technology &copy; 2026</p>
+  </div>
+</body>
+</html>`;
+  return c.html(html);
+});
+
+// POST /admin/migrate-stripe — Add Stripe columns to tenants table
+app.post('/admin/migrate-stripe', async (c) => {
+  try {
+    const migrations = [
+      "ALTER TABLE tenants ADD COLUMN stripe_customer_id TEXT",
+      "ALTER TABLE tenants ADD COLUMN stripe_subscription_id TEXT",
+      "ALTER TABLE tenants ADD COLUMN plan_expires_at TEXT",
+    ];
+    const results: string[] = [];
+    for (const sql of migrations) {
+      try {
+        await c.env.DB.prepare(sql).run();
+        results.push(`OK: ${sql}`);
+      } catch (e: any) {
+        if (e?.message?.includes('duplicate column') || e?.message?.includes('already exists')) {
+          results.push(`SKIP (exists): ${sql}`);
+        } else {
+          results.push(`FAIL: ${sql} — ${e?.message}`);
+        }
+      }
+    }
+    log('info', 'Stripe migration executed', { results });
+    return c.json({ migrated: true, results });
+  } catch (e: any) {
+    log('error', 'Stripe migration failed', { error: e?.message });
+    return c.json({ error: 'Migration failed' }, 500);
+  }
+});
 
 // ─── Global Error Handlers ──────────────────────────────────────────
 app.onError((err, c) => {
